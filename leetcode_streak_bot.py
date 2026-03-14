@@ -541,7 +541,7 @@ async def reload_reminders():
 def main():
     global _app
 
-    token = '8623291166:AAGpnOl3HXQTEmu84n5ptX_0z1u2QnPdYug' # os.environ.get("BOT_TOKEN")
+    token = os.environ.get("BOT_TOKEN")
     if not token:
         raise ValueError("Set the BOT_TOKEN environment variable")
 
@@ -584,8 +584,34 @@ def main():
     _app.post_init    = on_startup
     _app.post_shutdown = on_shutdown
 
-    logger.info("Starting polling…")
-    _app.run_polling()
+    async def run():
+        await init_db()
+        await reload_reminders()
+        scheduler.start()
+
+        # Minimal HTTP server so Render's health check passes
+        from aiohttp import web
+
+        async def health(_):
+            return web.Response(text="ok")
+
+        site = web.Application()
+        site.router.add_get("/", health)
+        runner = web.AppRunner(site)
+        await runner.setup()
+        port = int(os.environ.get("PORT", 8080))
+        await web.TCPSite(runner, "0.0.0.0", port).start()
+        logger.info(f"Health server on port {port}")
+
+        # Run bot (blocks until stopped)
+        async with _app:
+            await _app.start()
+            await _app.updater.start_polling()
+            logger.info("Bot polling…")
+            # Keep running forever
+            await asyncio.Event().wait()
+
+    asyncio.run(run())
 
 if __name__ == "__main__":
     main()
